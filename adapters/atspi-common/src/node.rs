@@ -434,6 +434,10 @@ impl NodeWrapper<'_> {
         if let Some(role_description) = self.braille_role_description() {
             attributes.insert("brailleroledescription", role_description.to_string());
         }
+        if let Some(level) = self.0.level() {
+            // AccessKit levels are zero-based; AT-SPI (like ARIA) is one-based.
+            attributes.insert("level", level.saturating_add(1).to_string());
+        }
 
         attributes
     }
@@ -2062,4 +2066,33 @@ pub struct CacheNode {
     pub description: String,
     pub role: AtspiRole,
     pub states: StateSet,
+}
+
+#[cfg(test)]
+mod level_tests {
+    use accesskit::{Node, NodeId, Role};
+
+    use crate::test_util::{adapter, node_at, with_children};
+
+    #[test]
+    fn level_attribute_is_one_based() {
+        let mut heading = Node::new(Role::Heading);
+        heading.set_level(1);
+        let a = adapter(vec![
+            (
+                NodeId(0),
+                with_children(Role::Window, &[NodeId(1), NodeId(2)]),
+            ),
+            (NodeId(1), heading),
+            (NodeId(2), Node::new(Role::Button)),
+        ]);
+        let attributes = node_at(&a, &[0]).attributes().unwrap();
+        assert_eq!(attributes.get("level").map(String::as_str), Some("2"));
+        assert!(
+            !node_at(&a, &[1])
+                .attributes()
+                .unwrap()
+                .contains_key("level")
+        );
+    }
 }
