@@ -2418,3 +2418,32 @@ pub struct CacheNode {
     pub role: AtspiRole,
     pub states: StateSet,
 }
+
+#[cfg(test)]
+mod table_level_tests {
+    use accesskit::{Node, NodeId, Role};
+
+    use crate::test_util::{adapter, node_at, with_children};
+
+    #[test]
+    fn level_attribute_is_one_based() {
+        let mut heading = Node::new(Role::Heading);
+        heading.set_level(1);
+        let a = adapter(vec![
+            (
+                NodeId(0),
+                with_children(Role::Window, &[NodeId(1), NodeId(2)]),
+            ),
+            (NodeId(1), heading),
+            (NodeId(2), Node::new(Role::Button)),
+        ]);
+        let attributes = node_at(&a, &[0]).attributes().unwrap();
+        assert_eq!(attributes.get("level").map(String::as_str), Some("2"));
+        assert!(
+            !node_at(&a, &[1])
+                .attributes()
+                .unwrap()
+                .contains_key("level")
+        );
+    }
+}

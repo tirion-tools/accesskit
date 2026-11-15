@@ -16,6 +16,8 @@ mod rect;
 #[cfg(feature = "simplified-api")]
 pub mod simplified;
 mod table;
+#[cfg(test)]
+mod test_util;
 mod text_attributes;
 mod util;
 
