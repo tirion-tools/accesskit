@@ -2087,3 +2087,44 @@ pub struct CacheNode {
     pub role: AtspiRole,
     pub states: StateSet,
 }
+
+#[cfg(test)]
+mod structural_text_tests {
+    use accesskit::{Node, NodeId, Role};
+    use atspi_common::Interface;
+
+    use crate::test_util::{adapter, node_at, text_run, with_children};
+
+    #[test]
+    fn heading_and_cell_with_text_runs_expose_text() {
+        let mut named_heading = Node::new(Role::Heading);
+        named_heading.set_label("No runs");
+        let a = adapter(vec![
+            (NodeId(0), with_children(Role::Window, &[NodeId(1)])),
+            (
+                NodeId(1),
+                with_children(Role::Document, &[NodeId(2), NodeId(4), NodeId(5)]),
+            ),
+            (NodeId(2), with_children(Role::Heading, &[NodeId(3)])),
+            (NodeId(3), text_run("Intro")),
+            (NodeId(4), named_heading),
+            (NodeId(5), with_children(Role::Table, &[NodeId(6)])),
+            (NodeId(6), with_children(Role::Row, &[NodeId(7)])),
+            (NodeId(7), with_children(Role::Cell, &[NodeId(8)])),
+            (NodeId(8), text_run("42")),
+        ]);
+
+        let heading = node_at(&a, &[0, 0]);
+        assert!(heading.interfaces().unwrap().contains(Interface::Text));
+        assert_eq!(heading.character_count().unwrap(), 5);
+        assert_eq!(heading.text(0, -1).unwrap(), "Intro");
+
+        let cell = node_at(&a, &[0, 2, 0, 0]);
+        assert!(cell.interfaces().unwrap().contains(Interface::Text));
+        assert_eq!(cell.text(0, -1).unwrap(), "42");
+
+        // A heading without text runs keeps its name only.
+        let named = node_at(&a, &[0, 1]);
+        assert!(!named.interfaces().unwrap().contains(Interface::Text));
+    }
+}
