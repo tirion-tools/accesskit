@@ -262,3 +262,91 @@ impl TableModel {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use accesskit::{Node, NodeId, Role};
+    use atspi_common::Interface;
+
+    use crate::{
+        Adapter, PlatformNode,
+        test_util::{adapter, node_at, with_children},
+    };
+
+    fn labelled(role: Role, label: &str) -> Node {
+        let mut node = Node::new(role);
+        node.set_label(label);
+        node
+    }
+
+    // | Name  | Size |
+    // | a.txt | 1 KB |
+    // | Total (2 columns) |
+    fn table() -> Adapter {
+        let mut files = labelled(Role::Table, "Files");
+        files.set_children(vec![NodeId(2), NodeId(5), NodeId(8)]);
+        let mut total = labelled(Role::Cell, "Total");
+        total.set_column_span(2);
+        adapter(vec![
+            (NodeId(0), with_children(Role::Window, &[NodeId(1)])),
+            (NodeId(1), files),
+            (NodeId(2), with_children(Role::Row, &[NodeId(3), NodeId(4)])),
+            (NodeId(3), labelled(Role::ColumnHeader, "Name")),
+            (NodeId(4), labelled(Role::ColumnHeader, "Size")),
+            (NodeId(5), with_children(Role::Row, &[NodeId(6), NodeId(7)])),
+            (NodeId(6), labelled(Role::Cell, "a.txt")),
+            (NodeId(7), labelled(Role::Cell, "1 KB")),
+            (NodeId(8), with_children(Role::Row, &[NodeId(9)])),
+            (NodeId(9), total),
+        ])
+    }
+
+    fn name(a: &Adapter, id: Option<accesskit_consumer::FullNodeId>) -> String {
+        a.platform_node(id.unwrap()).name().unwrap()
+    }
+
+    fn cell(a: &Adapter, row: usize, column: usize) -> PlatformNode {
+        node_at(a, &[0, row, column])
+    }
+
+    #[test]
+    fn table_geometry_and_headers() {
+        let a = table();
+        let table = node_at(&a, &[0]);
+        assert!(table.interfaces().unwrap().contains(Interface::Table));
+        assert_eq!(table.table_row_count().unwrap(), 3);
+        assert_eq!(table.table_column_count().unwrap(), 2);
+        assert_eq!(name(&a, table.table_cell_at(1, 0).unwrap()), "a.txt");
+        // The spanning cell covers both columns of the last row.
+        assert_eq!(name(&a, table.table_cell_at(2, 1).unwrap()), "Total");
+        assert_eq!(name(&a, table.table_column_header(1).unwrap()), "Size");
+        assert_eq!(table.table_cell_at(3, 0).unwrap(), None);
+        assert_eq!(table.table_index_at(1, 1).unwrap(), 3);
+        assert_eq!(table.table_index_at(3, 0).unwrap(), -1);
+    }
+
+    #[test]
+    fn table_cell_position_span_and_headers() {
+        let a = table();
+        let size = cell(&a, 1, 1);
+        assert!(size.interfaces().unwrap().contains(Interface::TableCell));
+        assert_eq!(size.table_cell_position().unwrap(), (1, 1));
+        let headers: Vec<String> = size
+            .table_cell_column_header_cells()
+            .unwrap()
+            .into_iter()
+            .map(|id| name(&a, Some(id)))
+            .collect();
+        assert_eq!(headers, ["Size"]);
+        assert_eq!(name(&a, size.table_cell_table().unwrap()), "Files");
+
+        let total = cell(&a, 2, 0);
+        assert_eq!(total.table_cell_row_column_span().unwrap(), (2, 0, 1, 2));
+
+        // Rows are neither tables nor cells.
+        let row = node_at(&a, &[0, 0]);
+        let interfaces = row.interfaces().unwrap();
+        assert!(!interfaces.contains(Interface::Table));
+        assert!(!interfaces.contains(Interface::TableCell));
+    }
+}
