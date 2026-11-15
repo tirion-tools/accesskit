@@ -28,6 +28,7 @@ use crate::{
     adapter::Adapter,
     context::{AppContext, Context},
     filters::filter,
+    table::{TableCellInfo, TableModel, containing_table, is_table_cell_role, is_table_role},
     text_attributes::ATTRIBUTE_GETTERS,
     util::*,
 };
@@ -477,6 +478,14 @@ impl NodeWrapper<'_> {
         self.0.supports_text_ranges()
     }
 
+    fn supports_table(&self) -> bool {
+        is_table_role(self.0.role())
+    }
+
+    fn supports_table_cell(&self) -> bool {
+        is_table_cell_role(self.0.role())
+    }
+
     fn supports_value(&self) -> bool {
         self.current_value().is_some()
     }
@@ -503,6 +512,12 @@ impl NodeWrapper<'_> {
         }
         if self.supports_selection() {
             interfaces.insert(Interface::Selection);
+        }
+        if self.supports_table() {
+            interfaces.insert(Interface::Table);
+        }
+        if self.supports_table_cell() {
+            interfaces.insert(Interface::TableCell);
         }
         if self.supports_text() {
             interfaces.insert(Interface::Text);
@@ -1784,6 +1799,264 @@ impl PlatformNode {
             data: Some(ActionData::NumericValue(value)),
         })
     }
+
+    fn resolve_for_table<F, T>(&self, f: F) -> Result<T>
+    where
+        for<'a> F: FnOnce(NodeRef<'a>, TableModel) -> Result<T>,
+    {
+        self.resolve(|node| {
+            if NodeWrapper(&node).supports_table() {
+                let model = TableModel::new(&node);
+                f(node, model)
+            } else {
+                Err(Error::UnsupportedInterface)
+            }
+        })
+    }
+
+    /// Resolves a cell together with its containing table's model, if the
+    /// cell is inside a table.
+    fn resolve_for_table_cell<F, T>(&self, f: F) -> Result<T>
+    where
+        for<'a> F:
+            FnOnce(NodeRef<'a>, Option<(NodeRef<'a>, TableModel, TableCellInfo)>) -> Result<T>,
+    {
+        self.resolve(|node| {
+            if !NodeWrapper(&node).supports_table_cell() {
+                return Err(Error::UnsupportedInterface);
+            }
+            let table = containing_table(&node).and_then(|table| {
+                let model = TableModel::new(&table);
+                let cell = *model.cell(node.id())?;
+                Some((table, model, cell))
+            });
+            f(node, table)
+        })
+    }
+
+    pub fn supports_table(&self) -> Result<bool> {
+        self.resolve(|node| Ok(NodeWrapper(&node).supports_table()))
+    }
+
+    pub fn supports_table_cell(&self) -> Result<bool> {
+        self.resolve(|node| Ok(NodeWrapper(&node).supports_table_cell()))
+    }
+
+    pub fn table_row_count(&self) -> Result<i32> {
+        self.resolve_for_table(|_, model| Ok(saturating_i32(model.row_count)))
+    }
+
+    pub fn table_column_count(&self) -> Result<i32> {
+        self.resolve_for_table(|_, model| Ok(saturating_i32(model.column_count)))
+    }
+
+    pub fn table_caption(&self) -> Result<Option<FullNodeId>> {
+        self.resolve_for_table(|_, model| Ok(model.caption))
+    }
+
+    pub fn table_cell_at(&self, row: i32, column: i32) -> Result<Option<FullNodeId>> {
+        self.resolve_for_table(|node, model| {
+            Ok(table_position(row, column)
+                .and_then(|(row, column)| model.cell_at(row, column))
+                .and_then(|cell| included_node(&node, cell.id)))
+        })
+    }
+
+    pub fn table_index_at(&self, row: i32, column: i32) -> Result<i32> {
+        self.resolve_for_table(|_, model| {
+            Ok(match table_position(row, column) {
+                Some((row, column)) if row < model.row_count && column < model.column_count => row
+                    .checked_mul(model.column_count)
+                    .and_then(|index| index.checked_add(column))
+                    .and_then(|index| i32::try_from(index).ok())
+                    .unwrap_or(-1),
+                _ => -1,
+            })
+        })
+    }
+
+    pub fn table_row_at_index(&self, index: i32) -> Result<i32> {
+        self.resolve_for_table(|_, model| {
+            Ok(usize::try_from(index)
+                .ok()
+                .and_then(|index| model.index_to_position(index))
+                .map_or(-1, |(row, _)| saturating_i32(row)))
+        })
+    }
+
+    pub fn table_column_at_index(&self, index: i32) -> Result<i32> {
+        self.resolve_for_table(|_, model| {
+            Ok(usize::try_from(index)
+                .ok()
+                .and_then(|index| model.index_to_position(index))
+                .map_or(-1, |(_, column)| saturating_i32(column)))
+        })
+    }
+
+    pub fn table_row_extent_at(&self, row: i32, column: i32) -> Result<i32> {
+        self.resolve_for_table(|_, model| {
+            Ok(table_position(row, column)
+                .and_then(|(row, column)| model.cell_at(row, column))
+                .map_or(0, |cell| saturating_i32(cell.row_span)))
+        })
+    }
+
+    pub fn table_column_extent_at(&self, row: i32, column: i32) -> Result<i32> {
+        self.resolve_for_table(|_, model| {
+            Ok(table_position(row, column)
+                .and_then(|(row, column)| model.cell_at(row, column))
+                .map_or(0, |cell| saturating_i32(cell.column_span)))
+        })
+    }
+
+    /// Returns `(found, row, column, row_extent, column_extent, is_selected)`
+    /// for the cell covering the given flat index.
+    pub fn table_row_column_extents_at_index(
+        &self,
+        index: i32,
+    ) -> Result<(bool, i32, i32, i32, i32, bool)> {
+        self.resolve_for_table(|_, model| {
+            Ok(usize::try_from(index)
+                .ok()
+                .and_then(|index| model.index_to_position(index))
+                .and_then(|(row, column)| model.cell_at(row, column))
+                .map_or((false, -1, -1, 0, 0, false), |cell| {
+                    (
+                        true,
+                        saturating_i32(cell.row),
+                        saturating_i32(cell.column),
+                        saturating_i32(cell.row_span),
+                        saturating_i32(cell.column_span),
+                        false,
+                    )
+                }))
+        })
+    }
+
+    pub fn table_row_header(&self, row: i32) -> Result<Option<FullNodeId>> {
+        self.resolve_for_table(|node, model| {
+            Ok(usize::try_from(row)
+                .ok()
+                .and_then(|row| model.row_header(row))
+                .and_then(|cell| included_node(&node, cell.id)))
+        })
+    }
+
+    pub fn table_column_header(&self, column: i32) -> Result<Option<FullNodeId>> {
+        self.resolve_for_table(|node, model| {
+            Ok(usize::try_from(column)
+                .ok()
+                .and_then(|column| model.column_header(column))
+                .and_then(|cell| included_node(&node, cell.id)))
+        })
+    }
+
+    pub fn table_row_description(&self, row: i32) -> Result<String> {
+        self.resolve_for_table(|node, model| {
+            Ok(usize::try_from(row)
+                .ok()
+                .and_then(|row| model.row_header(row))
+                .and_then(|cell| node_name(&node, cell.id))
+                .unwrap_or_default())
+        })
+    }
+
+    pub fn table_column_description(&self, column: i32) -> Result<String> {
+        self.resolve_for_table(|node, model| {
+            Ok(usize::try_from(column)
+                .ok()
+                .and_then(|column| model.column_header(column))
+                .and_then(|cell| node_name(&node, cell.id))
+                .unwrap_or_default())
+        })
+    }
+
+    /// Returns `(row, column)`, or `(-1, -1)` if the cell is not in a table.
+    pub fn table_cell_position(&self) -> Result<(i32, i32)> {
+        self.resolve_for_table_cell(|_, table| {
+            Ok(table.map_or((-1, -1), |(_, _, cell)| {
+                (saturating_i32(cell.row), saturating_i32(cell.column))
+            }))
+        })
+    }
+
+    pub fn table_cell_row_span(&self) -> Result<i32> {
+        self.resolve_for_table_cell(|_, table| {
+            Ok(table.map_or(1, |(_, _, cell)| saturating_i32(cell.row_span)))
+        })
+    }
+
+    pub fn table_cell_column_span(&self) -> Result<i32> {
+        self.resolve_for_table_cell(|_, table| {
+            Ok(table.map_or(1, |(_, _, cell)| saturating_i32(cell.column_span)))
+        })
+    }
+
+    /// Returns `(row, column, row_span, column_span)`.
+    pub fn table_cell_row_column_span(&self) -> Result<(i32, i32, i32, i32)> {
+        self.resolve_for_table_cell(|_, table| {
+            Ok(table.map_or((-1, -1, 1, 1), |(_, _, cell)| {
+                (
+                    saturating_i32(cell.row),
+                    saturating_i32(cell.column),
+                    saturating_i32(cell.row_span),
+                    saturating_i32(cell.column_span),
+                )
+            }))
+        })
+    }
+
+    pub fn table_cell_table(&self) -> Result<Option<FullNodeId>> {
+        self.resolve_for_table_cell(|node, table| {
+            Ok(table.and_then(|(table, _, _)| included_node(&node, table.id())))
+        })
+    }
+
+    pub fn table_cell_column_header_cells(&self) -> Result<Vec<FullNodeId>> {
+        self.resolve_for_table_cell(|node, table| {
+            Ok(table.map_or_else(Vec::new, |(_, model, cell)| {
+                model
+                    .column_header_cells(&cell)
+                    .filter_map(|header| included_node(&node, header.id))
+                    .collect()
+            }))
+        })
+    }
+
+    pub fn table_cell_row_header_cells(&self) -> Result<Vec<FullNodeId>> {
+        self.resolve_for_table_cell(|node, table| {
+            Ok(table.map_or_else(Vec::new, |(_, model, cell)| {
+                model
+                    .row_header_cells(&cell)
+                    .filter_map(|header| included_node(&node, header.id))
+                    .collect()
+            }))
+        })
+    }
+}
+
+fn saturating_i32(value: usize) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+fn table_position(row: i32, column: i32) -> Option<(usize, usize)> {
+    Some((usize::try_from(row).ok()?, usize::try_from(column).ok()?))
+}
+
+/// Returns `id` if that node is exposed on AT-SPI (it has an object path).
+fn included_node(context_node: &NodeRef, id: FullNodeId) -> Option<FullNodeId> {
+    context_node
+        .tree_state
+        .node_by_id(id)
+        .filter(|node| filter(node) == FilterResult::Include)
+        .map(|node| node.id())
+}
+
+fn node_name(context_node: &NodeRef, id: FullNodeId) -> Option<String> {
+    context_node
+        .tree_state
+        .node_by_id(id)
+        .and_then(|node| NodeWrapper(&node).name())
 }
 
 impl PartialEq for PlatformNode {
