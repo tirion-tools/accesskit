@@ -495,7 +495,31 @@ impl NodeWrapper<'_> {
     }
 
     fn supports_text(&self) -> bool {
-        self.0.supports_text_ranges()
+        self.0.supports_text_ranges() || self.is_structural_text_container()
+    }
+
+    /// Headings and table cells whose descendants hold text runs also expose
+    /// org.a11y.atspi.Text over those runs (the same runs stay part of the enclosing document's text).
+    /// Orca speaks a heading from its Text content and, in structural navigation, moves to an object
+    /// with Text.SetCaretOffset; without a Text interface it says only "heading 1" and cannot move.
+    fn is_structural_text_container(&self) -> bool {
+        if !matches!(
+            self.0.role(),
+            Role::Heading | Role::Cell | Role::GridCell | Role::ColumnHeader | Role::RowHeader
+        ) {
+            return false;
+        }
+        let id = self.0.id();
+        self.0
+            .filtered_children(move |node: &NodeRef| {
+                if node.id() == id || node.role() == Role::TextRun {
+                    FilterResult::Include
+                } else {
+                    FilterResult::ExcludeNode
+                }
+            })
+            .next()
+            .is_some()
     }
 
     fn supports_table(&self) -> bool {
