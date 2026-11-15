@@ -349,6 +349,10 @@ impl NodeWrapper<'_> {
                 atspi_state.insert(State::Expanded);
             }
         }
+        // ARIA aria-haspopup: AT-SPI HAS_POPUP (Core-AAM 1.2).
+        if state.has_popup().is_some() {
+            atspi_state.insert(State::HasPopup);
+        }
         if let Some(selected) = state.is_selected() {
             if !state.is_disabled() {
                 atspi_state.insert(State::Selectable);
