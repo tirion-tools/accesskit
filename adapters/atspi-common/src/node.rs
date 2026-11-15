@@ -2074,3 +2074,50 @@ pub struct CacheNode {
     pub role: AtspiRole,
     pub states: StateSet,
 }
+
+#[cfg(test)]
+mod expanded_has_popup_tests {
+    use accesskit::{HasPopup, Node, NodeId, Role};
+
+    use crate::{
+        State,
+        test_util::{adapter, node_at, with_children},
+    };
+
+    fn states(expanded: Option<bool>, has_popup: Option<HasPopup>) -> crate::StateSet {
+        let mut button = Node::new(Role::Button);
+        if let Some(expanded) = expanded {
+            button.set_expanded(expanded);
+        }
+        if let Some(has_popup) = has_popup {
+            button.set_has_popup(has_popup);
+        }
+        let a = adapter(vec![
+            (NodeId(0), with_children(Role::Window, &[NodeId(1)])),
+            (NodeId(1), button),
+        ]);
+        node_at(&a, &[0]).state()
+    }
+
+    #[test]
+    fn expanded_maps_to_expandable_and_expanded() {
+        let collapsed = states(Some(false), None);
+        assert!(collapsed.contains(State::Expandable));
+        assert!(!collapsed.contains(State::Expanded));
+
+        let expanded = states(Some(true), None);
+        assert!(expanded.contains(State::Expandable));
+        assert!(expanded.contains(State::Expanded));
+
+        let plain = states(None, None);
+        assert!(!plain.contains(State::Expandable));
+        assert!(!plain.contains(State::Expanded));
+    }
+
+    #[test]
+    fn has_popup_maps_to_has_popup() {
+        assert!(states(None, Some(HasPopup::Menu)).contains(State::HasPopup));
+        assert!(states(Some(false), Some(HasPopup::Listbox)).contains(State::HasPopup));
+        assert!(!states(None, None).contains(State::HasPopup));
+    }
+}
