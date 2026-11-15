@@ -6,6 +6,7 @@
 mod action;
 mod adapter;
 mod callback;
+mod collection;
 mod context;
 mod error;
 mod events;
@@ -25,6 +26,7 @@ pub use atspi_common::{
 pub use action::*;
 pub use adapter::{Adapter, next_adapter_id};
 pub use callback::AdapterCallback;
+pub use collection::MatchRule;
 pub use context::{ActionHandlerNoMut, ActionHandlerWrapper, AppContext};
 pub use error::*;
 pub use events::*;

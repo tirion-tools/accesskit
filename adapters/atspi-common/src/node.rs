@@ -414,7 +414,7 @@ impl NodeWrapper<'_> {
         self.0.braille_role_description()
     }
 
-    fn attributes(&self) -> HashMap<&'static str, String> {
+    pub(crate) fn attributes(&self) -> HashMap<&'static str, String> {
         let mut attributes = HashMap::new();
         if let Some(placeholder) = self.placeholder() {
             attributes.insert("placeholder-text", placeholder.to_string());
@@ -454,6 +454,22 @@ impl NodeWrapper<'_> {
         matches!(self.0.role(), Role::RootWebArea | Role::PdfRoot)
     }
 
+    /// org.a11y.atspi.Collection on the window root and on document roles,
+    /// the containers Orca's structural navigation searches (`get_top_level_document_for_object`,
+    /// the active window in GUI mode).
+    fn supports_collection(&self) -> bool {
+        self.is_root()
+            || matches!(
+                self.role(),
+                AtspiRole::DocumentFrame
+                    | AtspiRole::DocumentWeb
+                    | AtspiRole::DocumentText
+                    | AtspiRole::DocumentEmail
+                    | AtspiRole::DocumentPresentation
+                    | AtspiRole::DocumentSpreadsheet
+            )
+    }
+
     fn supports_editable_text(&self) -> bool {
         self.0.is_text_input() && self.0.supports_text_ranges()
     }
@@ -485,6 +501,9 @@ impl NodeWrapper<'_> {
         let mut interfaces = InterfaceSet::new(Interface::Accessible);
         if self.supports_action() {
             interfaces.insert(Interface::Action);
+        }
+        if self.supports_collection() {
+            interfaces.insert(Interface::Collection);
         }
         if self.supports_component() {
             interfaces.insert(Interface::Component);
@@ -1005,6 +1024,30 @@ impl PlatformNode {
             Ok(wrapper.state(tree.state().focus_id().is_some()))
         })
         .unwrap_or(State::Defunct.into())
+    }
+
+    pub fn collection_matches(
+        &self,
+        rule: &crate::collection::MatchRule,
+        reverse: bool,
+        count: usize,
+        traverse: bool,
+    ) -> Result<Vec<FullNodeId>> {
+        self.resolve_with_context(|node, tree, _| {
+            let mut matches = Vec::new();
+            crate::collection::collect_matches(
+                &node,
+                rule,
+                tree.state().focus_id().is_some(),
+                count,
+                traverse,
+                &mut matches,
+            );
+            if reverse {
+                matches.reverse();
+            }
+            Ok(matches)
+        })
     }
 
     pub fn attributes(&self) -> Result<HashMap<&'static str, String>> {
