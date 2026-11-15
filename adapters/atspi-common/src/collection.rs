@@ -200,3 +200,139 @@ pub(crate) fn collect_matches(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use accesskit::{Node, NodeId, Role};
+    use atspi_common::Interface;
+
+    use super::{MATCH_ALL, MATCH_ANY, MatchRule};
+    use crate::{
+        Adapter, PlatformNode,
+        test_util::{adapter, node_at, with_children},
+    };
+
+    fn role_bits(roles: &[crate::Role]) -> Vec<i32> {
+        let mut words = vec![0i32; 4];
+        for role in roles {
+            let bit = *role as u32;
+            words[(bit / 32) as usize] |= (1u32 << (bit % 32)) as i32;
+        }
+        words
+    }
+
+    fn rule(roles: &[crate::Role], attributes: &[(&str, &str)], invert: bool) -> MatchRule {
+        MatchRule::from_wire(
+            &[0, 0],
+            MATCH_ALL,
+            attributes
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            MATCH_ALL,
+            &role_bits(roles),
+            MATCH_ANY,
+            Vec::new(),
+            MATCH_ALL,
+            invert,
+        )
+    }
+
+    fn named(role: Role, label: &str, html_id: &str) -> Node {
+        let mut node = Node::new(role);
+        node.set_label(label);
+        node.set_html_id(html_id);
+        node
+    }
+
+    // Window > Document > [heading "First", group > [heading "Nested"], heading "Second"]
+    fn document() -> Adapter {
+        let mut group = named(Role::Group, "Group", "g");
+        group.set_children(vec![NodeId(4)]);
+        adapter(vec![
+            (NodeId(0), with_children(Role::Window, &[NodeId(1)])),
+            (
+                NodeId(1),
+                with_children(Role::Document, &[NodeId(2), NodeId(3), NodeId(5)]),
+            ),
+            (NodeId(2), named(Role::Heading, "First", "a")),
+            (NodeId(3), group),
+            (NodeId(4), named(Role::Heading, "Nested", "x:y")),
+            (NodeId(5), named(Role::Heading, "Second", "b")),
+        ])
+    }
+
+    fn names(
+        a: &Adapter,
+        node: &PlatformNode,
+        rule: &MatchRule,
+        reverse: bool,
+        count: usize,
+        traverse: bool,
+    ) -> Vec<String> {
+        node.collection_matches(rule, reverse, count, traverse)
+            .unwrap()
+            .into_iter()
+            .map(|id| a.platform_node(id).name().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn collection_on_root_and_documents_only() {
+        let a = document();
+        assert!(
+            node_at(&a, &[])
+                .interfaces()
+                .unwrap()
+                .contains(Interface::Collection)
+        );
+        assert!(
+            node_at(&a, &[0])
+                .interfaces()
+                .unwrap()
+                .contains(Interface::Collection)
+        );
+        assert!(
+            !node_at(&a, &[0, 0])
+                .interfaces()
+                .unwrap()
+                .contains(Interface::Collection)
+        );
+    }
+
+    #[test]
+    fn role_match_in_canonical_and_reverse_order() {
+        let a = document();
+        let root = node_at(&a, &[]);
+        let headings = rule(&[crate::Role::Heading], &[], false);
+        assert_eq!(
+            names(&a, &root, &headings, false, 0, true),
+            ["First", "Nested", "Second"]
+        );
+        assert_eq!(
+            names(&a, &root, &headings, true, 0, true),
+            ["Second", "Nested", "First"]
+        );
+        assert_eq!(names(&a, &root, &headings, false, 1, true), ["First"]);
+        // Without traverse only direct children are candidates.
+        let doc = node_at(&a, &[0]);
+        assert_eq!(
+            names(&a, &doc, &headings, false, 0, false),
+            ["First", "Second"]
+        );
+    }
+
+    #[test]
+    fn invert_and_attribute_alternatives() {
+        let a = document();
+        let doc = node_at(&a, &[0]);
+        let not_headings = rule(&[crate::Role::Heading], &[], true);
+        assert_eq!(names(&a, &doc, &not_headings, false, 0, true), ["Group"]);
+        // ':' separates alternatives, "\:" is a literal colon.
+        let by_id = rule(&[], &[("id", "b:x\\:y")], false);
+        assert_eq!(
+            names(&a, &doc, &by_id, false, 0, true),
+            ["Nested", "Second"]
+        );
+    }
+}
