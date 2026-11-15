@@ -135,6 +135,13 @@ impl Bus {
             self.register_interface(&path, ActionInterface::new(node.clone()))
                 .await?;
         }
+        if new_interfaces.contains(Interface::Collection) {
+            self.register_interface(
+                &path,
+                CollectionInterface::new(bus_name.clone(), node.clone()),
+            )
+            .await?;
+        }
         if new_interfaces.contains(Interface::Component) {
             self.register_interface(
                 &path,
@@ -208,6 +215,10 @@ impl Bus {
         }
         if old_interfaces.contains(Interface::Action) {
             self.unregister_interface::<ActionInterface>(&path).await?;
+        }
+        if old_interfaces.contains(Interface::Collection) {
+            self.unregister_interface::<CollectionInterface>(&path)
+                .await?;
         }
         if old_interfaces.contains(Interface::Component) {
             self.unregister_interface::<ComponentInterface>(&path)
