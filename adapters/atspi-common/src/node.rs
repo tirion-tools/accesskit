@@ -342,6 +342,13 @@ impl NodeWrapper<'_> {
         if state.is_modal() {
             atspi_state.insert(State::Modal);
         }
+        // Disclosure state (ARIA aria-expanded): AT-SPI EXPANDABLE, plus EXPANDED when open.
+        if let Some(expanded) = state.data().is_expanded() {
+            atspi_state.insert(State::Expandable);
+            if expanded {
+                atspi_state.insert(State::Expanded);
+            }
+        }
         if let Some(selected) = state.is_selected() {
             if !state.is_disabled() {
                 atspi_state.insert(State::Selectable);
