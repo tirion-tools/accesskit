@@ -354,6 +354,11 @@ impl NodeWrapper<'_> {
         if state.has_popup().is_some() {
             atspi_state.insert(State::HasPopup);
         }
+        // ARIA aria-invalid: AT-SPI INVALID_ENTRY (Core-AAM 1.2), for every
+        // kind of invalid value (true, grammar, spelling).
+        if state.data().invalid().is_some() {
+            atspi_state.insert(State::InvalidEntry);
+        }
         if let Some(selected) = state.is_selected() {
             if !state.is_disabled() {
                 atspi_state.insert(State::Selectable);
@@ -2533,5 +2538,35 @@ mod expanded_has_popup_tests {
         assert!(states(None, Some(HasPopup::Menu)).contains(State::HasPopup));
         assert!(states(Some(false), Some(HasPopup::Listbox)).contains(State::HasPopup));
         assert!(!states(None, None).contains(State::HasPopup));
+    }
+}
+
+#[cfg(test)]
+mod invalid_entry_tests {
+    use accesskit::{Invalid, Node, NodeId, Role};
+
+    use crate::{
+        State,
+        test_util::{adapter, node_at, with_children},
+    };
+
+    fn states(invalid: Option<Invalid>) -> crate::StateSet {
+        let mut input = Node::new(Role::TextInput);
+        if let Some(invalid) = invalid {
+            input.set_invalid(invalid);
+        }
+        let a = adapter(vec![
+            (NodeId(0), with_children(Role::Window, &[NodeId(1)])),
+            (NodeId(1), input),
+        ]);
+        node_at(&a, &[0]).state()
+    }
+
+    #[test]
+    fn invalid_maps_to_invalid_entry() {
+        assert!(states(Some(Invalid::True)).contains(State::InvalidEntry));
+        assert!(states(Some(Invalid::Spelling)).contains(State::InvalidEntry));
+        assert!(states(Some(Invalid::Grammar)).contains(State::InvalidEntry));
+        assert!(!states(None).contains(State::InvalidEntry));
     }
 }
