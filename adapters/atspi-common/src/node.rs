@@ -906,6 +906,15 @@ impl PlatformNode {
         })
     }
 
+    /// The `Locale` of `org.a11y.atspi.Accessible`: the node's language,
+    /// inherited from its ancestors, in the POSIX form AT-SPI documents
+    /// ("Unix locale"): the language subtag, then `_` and the region subtag
+    /// when the tag has one (`pt-BR` → `pt_BR`, `zh-Hant-TW` → `zh_TW`,
+    /// `fr` → `fr`). Empty when no ancestor sets a language.
+    pub fn locale(&self) -> Result<String> {
+        self.resolve(|node| Ok(node.language().map(posix_locale).unwrap_or_default()))
+    }
+
     pub fn child_at_index(&self, index: usize) -> Result<Option<FullNodeId>> {
         self.resolve(|node| {
             let child = node
@@ -2062,4 +2071,60 @@ pub struct CacheNode {
     pub description: String,
     pub role: AtspiRole,
     pub states: StateSet,
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use accesskit::{Node, NodeId, Role};
+
+    use crate::{
+        test_util::{adapter, node_at, with_children},
+        util::posix_locale,
+    };
+
+    #[test]
+    fn locale_is_the_inherited_language_in_posix_form() {
+        // A window in Canadian French holding a paragraph without a language and
+        // a quote in German; then a label (static text, no Text interface).
+        let mut root = with_children(Role::Window, &[NodeId(1), NodeId(3)]);
+        root.set_language("fr-CA");
+        let mut quote = Node::new(Role::Paragraph);
+        quote.set_label("Guten Tag");
+        quote.set_language("de");
+        let mut paragraph = with_children(Role::Paragraph, &[NodeId(2)]);
+        paragraph.set_label("Bonjour");
+        let mut label = Node::new(Role::Label);
+        label.set_value("Bonjour");
+        let a = adapter(vec![
+            (NodeId(0), root),
+            (NodeId(1), paragraph),
+            (NodeId(2), quote),
+            (NodeId(3), label),
+        ]);
+        assert_eq!(node_at(&a, &[0]).locale().unwrap(), "fr_CA");
+        assert_eq!(node_at(&a, &[0, 0]).locale().unwrap(), "de");
+        assert_eq!(node_at(&a, &[1]).locale().unwrap(), "fr_CA");
+    }
+
+    #[test]
+    fn locale_is_empty_without_a_language() {
+        let a = adapter(vec![
+            (NodeId(0), with_children(Role::Window, &[NodeId(1)])),
+            (NodeId(1), Node::new(Role::Button)),
+        ]);
+        assert_eq!(node_at(&a, &[0]).locale().unwrap(), "");
+    }
+
+    #[test]
+    fn posix_locale_keeps_language_and_region() {
+        assert_eq!(posix_locale("fr"), "fr");
+        assert_eq!(posix_locale("pt-BR"), "pt_BR");
+        assert_eq!(posix_locale("en-us"), "en_US");
+        assert_eq!(posix_locale("zh-Hant-TW"), "zh_TW");
+        assert_eq!(posix_locale("es-419"), "es_419");
+        assert_eq!(posix_locale("de-CH-1996"), "de_CH");
+        assert_eq!(posix_locale("sr-Latn"), "sr");
+        assert_eq!(posix_locale("en-u-ca-gregory"), "en");
+        assert_eq!(posix_locale("EN"), "en");
+    }
 }

@@ -62,8 +62,8 @@ impl NodeAccessibleInterface {
     }
 
     #[zbus(property)]
-    fn locale(&self) -> &str {
-        ""
+    fn locale(&self) -> fdo::Result<String> {
+        self.node.locale().map_err(self.map_error())
     }
 
     #[zbus(property)]
