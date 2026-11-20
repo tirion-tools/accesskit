@@ -132,3 +132,22 @@ pub(crate) fn atspi_scroll_type_to_scroll_hint(scroll_type: ScrollType) -> Optio
         ScrollType::Anywhere => None,
     }
 }
+
+/// A BCP 47 language tag in the POSIX locale form AT-SPI uses for
+/// `Accessible.Locale`: the language subtag, plus `_` and the region subtag
+/// (two letters or three digits) when there is one. Script, variant and
+/// extension subtags are dropped: clients such as Orca split the locale on
+/// `_` and read the second part as the region.
+pub(crate) fn posix_locale(tag: &str) -> String {
+    let mut subtags = tag.split(['-', '_']);
+    let language = subtags.next().unwrap_or_default().to_ascii_lowercase();
+    // A singleton (`u`, `x`) starts an extension or private use: no region after it.
+    let region = subtags.take_while(|s| s.len() > 1).find(|s| {
+        (s.len() == 2 && s.chars().all(|c| c.is_ascii_alphabetic()))
+            || (s.len() == 3 && s.chars().all(|c| c.is_ascii_digit()))
+    });
+    match region {
+        Some(region) => format!("{language}_{}", region.to_ascii_uppercase()),
+        None => language,
+    }
+}
